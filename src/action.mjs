@@ -8,11 +8,10 @@ import {
   safeHome,
   units,
   populated,
-  fingerprint,
+  stageSnapshot,
   exclusions,
   snapshotPath,
   resetSnapshot,
-  snapshot,
   restoreSnapshot,
   withCacheRoot,
   assertSafePath,
@@ -117,7 +116,10 @@ export async function runMain(core, cache, env = process.env) {
   const event = env.GITHUB_EVENT_PATH
     ? JSON.parse(await fs.readFile(env.GITHUB_EVENT_PATH, 'utf8'))
     : {};
-  const config = configuration(core, { ...env, GITHUB_EVENT_PATH_CONTENT: JSON.stringify(event) });
+  const config = configuration(core, {
+    ...env,
+    GITHUB_EVENT_PATH_CONTENT: JSON.stringify(event),
+  });
   const home = await safeHome(config.inputHome, env);
   core.exportVariable('GRADLE_USER_HOME', home);
   for (const [name, value] of Object.entries({
@@ -281,8 +283,9 @@ export async function runPost(core, cache, env = process.env) {
       rows = [];
     let saved = 0;
     for (const unit of await discoverUnits(home, config.scope, config.prefix)) {
-      const content = await withCacheRoot(home, () => fingerprint(unit, config.excluded, retain));
+      const content = await stageSnapshot(unit, config.excluded, retain, stage, home);
       if (!content.count) {
+        await fs.rm(path.join(stage, snapshotPath(unit)), { recursive: true, force: true });
         rows.push([unit.name, 'empty']);
         continue;
       }
@@ -290,10 +293,10 @@ export async function runPost(core, cache, env = process.env) {
       const key = `${unit.prefix}${content.hash}`;
       if (restored[unit.name] === key) {
         manifest.units[unit.name] = key;
+        await fs.rm(path.join(stage, snapshotPath(unit)), { recursive: true, force: true });
         rows.push([unit.name, 'unchanged (deduplicated)']);
         continue;
       }
-      await snapshot(unit, content.files, stage, home);
       let id;
       try {
         id = await withCacheRoot(stage, () => cache.saveCache([snapshotPath(unit)], key));

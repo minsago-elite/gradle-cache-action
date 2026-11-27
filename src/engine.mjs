@@ -3,7 +3,7 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
 import { createHash } from 'node:crypto';
-import { createReadStream } from 'node:fs';
+import { constants } from 'node:fs';
 import * as glob from '@actions/glob';
 
 export const digest = (value) => createHash('sha256').update(value).digest('hex');
@@ -38,7 +38,11 @@ export async function safeHome(input, env = process.env) {
 export function units(home, scope, prefix) {
   const base = `${prefix}-${process.platform}-${process.arch}-`;
   return [
-    { name: 'dependencies', paths: ['caches/modules-2/files-2.1'], prefix: `${base}dependencies-` },
+    {
+      name: 'dependencies',
+      paths: ['caches/modules-2/files-2.1'],
+      prefix: `${base}dependencies-`,
+    },
     {
       name: 'local-build',
       paths: ['caches/build-cache-*'],
@@ -106,7 +110,7 @@ export function exclusions(value) {
 export function patterns(unit, excluded = []) {
   return [...unit.paths, '!**/*.lock', '!**/*.lck', '!**/*.tmp', '!**/*.part', ...excluded];
 }
-export async function fingerprint(unit, excluded = [], retain = () => true) {
+export async function selectFiles(unit, excluded = [], retain = () => true) {
   const files = await (
     await glob.create(patterns(unit, excluded).join('\n'), {
       followSymbolicLinks: false,
@@ -114,28 +118,67 @@ export async function fingerprint(unit, excluded = [], retain = () => true) {
       implicitDescendants: true,
     })
   ).glob();
-  const hash = createHash('sha256');
-  let count = 0;
-  const retained = new Set();
+  const retained = [];
   for (const file of files.sort()) {
-    // Refuse symlinked ancestors even where the glob implementation returns their children.
-    let cursor = file;
-    while (cursor !== process.cwd() && cursor !== path.dirname(cursor)) {
-      if ((await fs.lstat(cursor)).isSymbolicLink())
-        throw new Error(`Symlink cannot be cached: ${cursor}`);
-      cursor = path.dirname(cursor);
-    }
-    if (!(await fs.lstat(file)).isFile() || !retain(file, await fs.stat(file))) continue;
-    retained.add(file);
-    hash.update(path.relative(process.cwd(), file));
-    hash.update('\0');
-    hash.update(String((await fs.stat(file)).mode & 0o777));
-    hash.update('\0');
-    for await (const chunk of createReadStream(file)) hash.update(chunk);
-    hash.update('\0');
-    count++;
+    await assertSafePath(file);
+    const stat = await fs.lstat(file);
+    if (stat.isFile() && retain(file, stat)) retained.push(file);
   }
-  return { hash: hash.digest('hex'), count, files: files.filter((file) => retained.has(file)) };
+  return retained;
+}
+async function hashFiles(files, root) {
+  const hash = createHash('sha256').update('gradle-cache-file-records-v2\0');
+  for (const file of files) {
+    await assertSafePath(file);
+    const handle = await fs.open(file, constants.O_RDONLY | (constants.O_NOFOLLOW || 0));
+    try {
+      const before = await handle.stat();
+      if (!before.isFile()) throw new Error('Cache snapshot member is not a regular file');
+      const content = createHash('sha256');
+      let size = 0;
+      for await (const chunk of handle.createReadStream({ autoClose: false })) {
+        content.update(chunk);
+        size += chunk.length;
+      }
+      const after = await handle.stat();
+      if (
+        size !== before.size ||
+        after.size !== before.size ||
+        after.mtimeMs !== before.mtimeMs ||
+        after.ctimeMs !== before.ctimeMs
+      )
+        throw new Error('Cache snapshot changed while hashing');
+      // Canonical records frame binary contents by their individual SHA rather than
+      // concatenating arbitrary bytes with delimiters. The length prefix also makes
+      // record boundaries explicit, including paths containing unusual characters.
+      const record = Buffer.from(
+        JSON.stringify([
+          path.relative(root, file).split(path.sep).join('/'),
+          before.mode & 0o777,
+          size,
+          content.digest('hex'),
+        ]),
+      );
+      const length = Buffer.alloc(8);
+      length.writeBigUInt64BE(BigInt(record.length));
+      hash.update(length);
+      hash.update(record);
+    } finally {
+      await handle.close();
+    }
+  }
+  return { hash: hash.digest('hex'), count: files.length, files };
+}
+export async function fingerprint(unit, excluded = [], retain = () => true) {
+  return hashFiles(await selectFiles(unit, excluded, retain), process.cwd());
+}
+// Take the private snapshot before reading any file contents for the cache key.
+// Reflinks are independent copies, never hard links to mutable Gradle files.
+export async function stageSnapshot(unit, excluded, retain, stage, home) {
+  const files = await withCacheRoot(home, () => selectFiles(unit, excluded, retain));
+  const root = await snapshot(unit, files, stage, home);
+  const staged = files.map((file) => path.join(root, path.relative(home, file)));
+  return hashFiles(staged, root);
 }
 
 export async function assertSafePath(target) {
@@ -162,12 +205,24 @@ export async function resetSnapshot(unit, stage = process.cwd()) {
 export async function snapshot(unit, files, stage = process.cwd(), home = process.cwd()) {
   const root = await resetSnapshot(unit, stage);
   for (const source of files) {
-    if (!(await fs.lstat(source)).isFile()) continue;
     await assertSafePath(source);
+    const before = await fs.lstat(source);
+    if (!before.isFile()) throw new Error('Cache source is no longer a regular file');
     const target = path.join(root, path.relative(home, source));
     await fs.mkdir(path.dirname(target), { recursive: true });
-    await fs.copyFile(source, target);
-    await fs.chmod(target, (await fs.stat(source)).mode);
+    await fs.copyFile(source, target, constants.COPYFILE_FICLONE | constants.COPYFILE_EXCL);
+    await assertSafePath(source);
+    const after = await fs.lstat(source);
+    if (
+      !after.isFile() ||
+      after.ino !== before.ino ||
+      after.dev !== before.dev ||
+      after.size !== before.size ||
+      after.mtimeMs !== before.mtimeMs ||
+      after.ctimeMs !== before.ctimeMs
+    )
+      throw new Error('Cache source changed while snapshotting');
+    await fs.chmod(target, before.mode);
   }
   return root;
 }

@@ -5779,7 +5779,7 @@ var require_client_h1 = __commonJS({
       kResume,
       kHTTPContext
     } = require_symbols();
-    var constants5 = require_constants2();
+    var constants6 = require_constants2();
     var EMPTY_BUF = Buffer.alloc(0);
     var FastBuffer = Buffer[Symbol.species];
     var addListener = util5.addListener;
@@ -5854,7 +5854,7 @@ var require_client_h1 = __commonJS({
       constructor(client, socket, { exports: exports3 }) {
         assert4(Number.isFinite(client[kMaxHeadersSize]) && client[kMaxHeadersSize] > 0);
         this.llhttp = exports3;
-        this.ptr = this.llhttp.llhttp_alloc(constants5.TYPE.RESPONSE);
+        this.ptr = this.llhttp.llhttp_alloc(constants6.TYPE.RESPONSE);
         this.client = client;
         this.socket = socket;
         this.timeout = null;
@@ -5949,11 +5949,11 @@ var require_client_h1 = __commonJS({
             currentBufferRef = null;
           }
           const offset = llhttp.llhttp_get_error_pos(this.ptr) - currentBufferPtr;
-          if (ret !== constants5.ERROR.OK) {
+          if (ret !== constants6.ERROR.OK) {
             const body2 = data.subarray(offset);
-            if (ret === constants5.ERROR.PAUSED_UPGRADE) {
+            if (ret === constants6.ERROR.PAUSED_UPGRADE) {
               this.onUpgrade(body2);
-            } else if (ret === constants5.ERROR.PAUSED) {
+            } else if (ret === constants6.ERROR.PAUSED) {
               this.paused = true;
               socket.unshift(body2);
             } else {
@@ -5976,10 +5976,10 @@ var require_client_h1 = __commonJS({
         } finally {
           currentParser = null;
         }
-        if (ret === constants5.ERROR.OK) {
+        if (ret === constants6.ERROR.OK) {
           return null;
         }
-        if (ret === constants5.ERROR.PAUSED || ret === constants5.ERROR.PAUSED_UPGRADE) {
+        if (ret === constants6.ERROR.PAUSED || ret === constants6.ERROR.PAUSED_UPGRADE) {
           this.paused = true;
           return null;
         }
@@ -5996,7 +5996,7 @@ var require_client_h1 = __commonJS({
           const len = new Uint8Array(llhttp.memory.buffer, ptr).indexOf(0);
           message = "Response does not match the HTTP/1.1 protocol (" + Buffer.from(llhttp.memory.buffer, ptr, len).toString() + ")";
         }
-        return new HTTPParserError(message, constants5.ERROR[ret], data);
+        return new HTTPParserError(message, constants6.ERROR[ret], data);
       }
       destroy() {
         assert4(this.ptr != null);
@@ -6176,7 +6176,7 @@ var require_client_h1 = __commonJS({
           socket[kBlocking] = false;
           client[kResume]();
         }
-        return pause ? constants5.ERROR.PAUSED : 0;
+        return pause ? constants6.ERROR.PAUSED : 0;
       }
       onBody(buf) {
         const { client, socket, statusCode, maxResponseSize } = this;
@@ -6198,7 +6198,7 @@ var require_client_h1 = __commonJS({
         }
         this.bytesRead += buf.length;
         if (request.onData(buf) === false) {
-          return constants5.ERROR.PAUSED;
+          return constants6.ERROR.PAUSED;
         }
       }
       onMessageComplete() {
@@ -6234,13 +6234,13 @@ var require_client_h1 = __commonJS({
         if (socket[kWriting]) {
           assert4(client[kRunning] === 0);
           util5.destroy(socket, new InformationalError("reset"));
-          return constants5.ERROR.PAUSED;
+          return constants6.ERROR.PAUSED;
         } else if (!shouldKeepAlive) {
           util5.destroy(socket, new InformationalError("reset"));
-          return constants5.ERROR.PAUSED;
+          return constants6.ERROR.PAUSED;
         } else if (socket[kReset] && client[kRunning] === 0) {
           util5.destroy(socket, new InformationalError("reset"));
-          return constants5.ERROR.PAUSED;
+          return constants6.ERROR.PAUSED;
         } else if (client[kPipelining] == null || client[kPipelining] === 1) {
           setImmediate(() => client[kResume]());
         } else {
@@ -21191,10 +21191,10 @@ var require_truncate = __commonJS({
   "node_modules/semver/functions/truncate.js"(exports2, module2) {
     "use strict";
     var parse2 = require_parse2();
-    var constants5 = require_constants6();
+    var constants6 = require_constants6();
     var SemVer = require_semver();
     var truncate = (version3, truncation, options2) => {
-      if (!constants5.RELEASE_TYPES.includes(truncation)) {
+      if (!constants6.RELEASE_TYPES.includes(truncation)) {
         return null;
       }
       const clonedVersion = cloneInputVersion(version3, options2);
@@ -22434,7 +22434,7 @@ var require_semver2 = __commonJS({
   "node_modules/semver/index.js"(exports2, module2) {
     "use strict";
     var internalRe = require_re();
-    var constants5 = require_constants6();
+    var constants6 = require_constants6();
     var SemVer = require_semver();
     var identifiers = require_identifiers();
     var parse2 = require_parse2();
@@ -22518,8 +22518,8 @@ var require_semver2 = __commonJS({
       re: internalRe.re,
       src: internalRe.src,
       tokens: internalRe.t,
-      SEMVER_SPEC_VERSION: constants5.SEMVER_SPEC_VERSION,
-      RELEASE_TYPES: constants5.RELEASE_TYPES,
+      SEMVER_SPEC_VERSION: constants6.SEMVER_SPEC_VERSION,
+      RELEASE_TYPES: constants6.RELEASE_TYPES,
       compareIdentifiers: identifiers.compareIdentifiers,
       rcompareIdentifiers: identifiers.rcompareIdentifiers
     };
@@ -69065,7 +69065,11 @@ async function safeHome(input, env = process.env) {
 function units(home, scope, prefix2) {
   const base = `${prefix2}-${process.platform}-${process.arch}-`;
   return [
-    { name: "dependencies", paths: ["caches/modules-2/files-2.1"], prefix: `${base}dependencies-` },
+    {
+      name: "dependencies",
+      paths: ["caches/modules-2/files-2.1"],
+      prefix: `${base}dependencies-`
+    },
     {
       name: "local-build",
       paths: ["caches/build-cache-*"],
@@ -69128,33 +69132,60 @@ function exclusions(value) {
 function patterns(unit, excluded = []) {
   return [...unit.paths, "!**/*.lock", "!**/*.lck", "!**/*.tmp", "!**/*.part", ...excluded];
 }
-async function fingerprint(unit, excluded = [], retain = () => true) {
+async function selectFiles(unit, excluded = [], retain = () => true) {
   const files = await (await create(patterns(unit, excluded).join("\n"), {
     followSymbolicLinks: false,
     matchDirectories: false,
     implicitDescendants: true
   })).glob();
-  const hash2 = (0, import_node_crypto5.createHash)("sha256");
-  let count = 0;
-  const retained = /* @__PURE__ */ new Set();
+  const retained = [];
   for (const file of files.sort()) {
-    let cursor = file;
-    while (cursor !== process.cwd() && cursor !== import_node_path2.default.dirname(cursor)) {
-      if ((await import_promises2.default.lstat(cursor)).isSymbolicLink())
-        throw new Error(`Symlink cannot be cached: ${cursor}`);
-      cursor = import_node_path2.default.dirname(cursor);
-    }
-    if (!(await import_promises2.default.lstat(file)).isFile() || !retain(file, await import_promises2.default.stat(file))) continue;
-    retained.add(file);
-    hash2.update(import_node_path2.default.relative(process.cwd(), file));
-    hash2.update("\0");
-    hash2.update(String((await import_promises2.default.stat(file)).mode & 511));
-    hash2.update("\0");
-    for await (const chunk of (0, import_node_fs3.createReadStream)(file)) hash2.update(chunk);
-    hash2.update("\0");
-    count++;
+    await assertSafePath(file);
+    const stat2 = await import_promises2.default.lstat(file);
+    if (stat2.isFile() && retain(file, stat2)) retained.push(file);
   }
-  return { hash: hash2.digest("hex"), count, files: files.filter((file) => retained.has(file)) };
+  return retained;
+}
+async function hashFiles2(files, root) {
+  const hash2 = (0, import_node_crypto5.createHash)("sha256").update("gradle-cache-file-records-v2\0");
+  for (const file of files) {
+    await assertSafePath(file);
+    const handle = await import_promises2.default.open(file, import_node_fs3.constants.O_RDONLY | (import_node_fs3.constants.O_NOFOLLOW || 0));
+    try {
+      const before = await handle.stat();
+      if (!before.isFile()) throw new Error("Cache snapshot member is not a regular file");
+      const content = (0, import_node_crypto5.createHash)("sha256");
+      let size = 0;
+      for await (const chunk of handle.createReadStream({ autoClose: false })) {
+        content.update(chunk);
+        size += chunk.length;
+      }
+      const after = await handle.stat();
+      if (size !== before.size || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs)
+        throw new Error("Cache snapshot changed while hashing");
+      const record = Buffer.from(
+        JSON.stringify([
+          import_node_path2.default.relative(root, file).split(import_node_path2.default.sep).join("/"),
+          before.mode & 511,
+          size,
+          content.digest("hex")
+        ])
+      );
+      const length = Buffer.alloc(8);
+      length.writeBigUInt64BE(BigInt(record.length));
+      hash2.update(length);
+      hash2.update(record);
+    } finally {
+      await handle.close();
+    }
+  }
+  return { hash: hash2.digest("hex"), count: files.length, files };
+}
+async function stageSnapshot(unit, excluded, retain, stage, home) {
+  const files = await withCacheRoot(home, () => selectFiles(unit, excluded, retain));
+  const root = await snapshot2(unit, files, stage, home);
+  const staged = files.map((file) => import_node_path2.default.join(root, import_node_path2.default.relative(home, file)));
+  return hashFiles2(staged, root);
 }
 async function assertSafePath(target) {
   let current = import_node_path2.default.resolve(target);
@@ -69180,12 +69211,17 @@ async function resetSnapshot(unit, stage = process.cwd()) {
 async function snapshot2(unit, files, stage = process.cwd(), home = process.cwd()) {
   const root = await resetSnapshot(unit, stage);
   for (const source of files) {
-    if (!(await import_promises2.default.lstat(source)).isFile()) continue;
     await assertSafePath(source);
+    const before = await import_promises2.default.lstat(source);
+    if (!before.isFile()) throw new Error("Cache source is no longer a regular file");
     const target = import_node_path2.default.join(root, import_node_path2.default.relative(home, source));
     await import_promises2.default.mkdir(import_node_path2.default.dirname(target), { recursive: true });
-    await import_promises2.default.copyFile(source, target);
-    await import_promises2.default.chmod(target, (await import_promises2.default.stat(source)).mode);
+    await import_promises2.default.copyFile(source, target, import_node_fs3.constants.COPYFILE_FICLONE | import_node_fs3.constants.COPYFILE_EXCL);
+    await assertSafePath(source);
+    const after = await import_promises2.default.lstat(source);
+    if (!after.isFile() || after.ino !== before.ino || after.dev !== before.dev || after.size !== before.size || after.mtimeMs !== before.mtimeMs || after.ctimeMs !== before.ctimeMs)
+      throw new Error("Cache source changed while snapshotting");
+    await import_promises2.default.chmod(target, before.mode);
   }
   return root;
 }
@@ -69387,7 +69423,10 @@ async function runMain(core, cache, env = process.env) {
   const encryptionKey2 = core.getInput("cache-encryption-key");
   configureEncryption(encryptionKey2, core);
   const event = env.GITHUB_EVENT_PATH ? JSON.parse(await import_promises3.default.readFile(env.GITHUB_EVENT_PATH, "utf8")) : {};
-  const config = configuration(core, { ...env, GITHUB_EVENT_PATH_CONTENT: JSON.stringify(event) });
+  const config = configuration(core, {
+    ...env,
+    GITHUB_EVENT_PATH_CONTENT: JSON.stringify(event)
+  });
   const home = await safeHome(config.inputHome, env);
   core.exportVariable("GRADLE_USER_HOME", home);
   for (const [name, value] of Object.entries({
@@ -69529,8 +69568,9 @@ async function runPost(core, cache, env = process.env) {
     const restored = JSON.parse(core.getState("restored") || "{}"), manifest = { version: 1, scope: config.scope, units: {}, descriptors: [] }, rows = [];
     let saved = 0;
     for (const unit of await discoverUnits(home, config.scope, config.prefix)) {
-      const content = await withCacheRoot(home, () => fingerprint(unit, config.excluded, retain));
+      const content = await stageSnapshot(unit, config.excluded, retain, stage, home);
       if (!content.count) {
+        await import_promises3.default.rm(import_node_path3.default.join(stage, snapshotPath(unit)), { recursive: true, force: true });
         rows.push([unit.name, "empty"]);
         continue;
       }
@@ -69538,10 +69578,10 @@ async function runPost(core, cache, env = process.env) {
       const key = `${unit.prefix}${content.hash}`;
       if (restored[unit.name] === key) {
         manifest.units[unit.name] = key;
+        await import_promises3.default.rm(import_node_path3.default.join(stage, snapshotPath(unit)), { recursive: true, force: true });
         rows.push([unit.name, "unchanged (deduplicated)"]);
         continue;
       }
-      await snapshot2(unit, content.files, stage, home);
       let id;
       try {
         id = await withCacheRoot(stage, () => cache.saveCache([snapshotPath(unit)], key));

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import { configuration, runMain, runPost } from '../src/action.mjs';
-import { snapshotPath } from '../src/engine.mjs';
+import { snapshotPath, fingerprint, descriptorUnit, stageSnapshot } from '../src/engine.mjs';
 
 function core(inputs = {}) {
   const state = {},
@@ -84,10 +84,10 @@ function backend(root) {
     },
   };
 }
-async function session(root, name, cache, extra = {}) {
+async function session(root, name, cache, extra = {}, envOverrides = {}, defaultBranch = 'main') {
   const home = path.join(root, name),
     event = path.join(root, 'event.json');
-  await fs.writeFile(event, JSON.stringify({ repository: { default_branch: 'main' } }));
+  await fs.writeFile(event, JSON.stringify({ repository: { default_branch: defaultBranch } }));
   const env = {
     GITHUB_WORKSPACE: path.join(root, 'workspace'),
     RUNNER_TEMP: root,
@@ -95,6 +95,7 @@ async function session(root, name, cache, extra = {}) {
     GITHUB_SHA: name,
     GITHUB_RUN_ID: name,
     GITHUB_EVENT_PATH: event,
+    ...envOverrides,
   };
   const c = core({ 'gradle-user-home': home, 'job-status': 'success', ...extra });
   await runMain(c, cache, env);
@@ -386,4 +387,144 @@ test('failed cache reservations cannot publish dangling manifest references', ()
     await s.post();
     assert.deepEqual(published.units, {});
     assert.equal(s.c.outputs['cache-saved-count'], 0);
+  }));
+
+test('shared cache family restores seed bytes across workflows and matrices without writes', () =>
+  fixture(async (root) => {
+    const cache = backend(root);
+    const inputs = {
+      'cache-family': 'shared',
+      'cache-key-prefix': 'shared-namespace',
+      matrix: '{"os":"linux","java":17}',
+    };
+    const producer = await session(
+      root,
+      'seed-master',
+      cache,
+      inputs,
+      {
+        GITHUB_REF: 'refs/heads/master',
+        GITHUB_WORKFLOW: 'Seed workflow',
+        GITHUB_JOB: 'seed',
+      },
+      'master',
+    );
+    assert.equal(JSON.parse(producer.c.state.config).readOnly, false);
+    const files = [
+      'caches/modules-2/files-2.1/library.jar',
+      'caches/modules-2/metadata-2.1/descriptor.bin',
+      'caches/8.14/kotlin-dsl/generated.bin',
+      'wrapper/dists/gradle-8.14-bin/hash/lib.jar',
+      'caches/8.14/generated-gradle-jars/gradle-api-8.14.jar',
+    ];
+    for (const file of files) await put(producer.home, file, `seed:${file}`);
+    await producer.post();
+    const before = cache.saves.length;
+    const consumer = await session(
+      root,
+      'consumer',
+      cache,
+      { ...inputs, matrix: '{"os":"linux","java":21}', 'cache-read-only': 'true' },
+      {
+        GITHUB_REF: 'refs/pull/12/merge',
+        GITHUB_WORKFLOW: 'Pull request checks',
+        GITHUB_JOB: 'verify',
+      },
+      'master',
+    );
+    assert.equal(consumer.c.outputs['cache-hit'], 'true');
+    for (const file of files)
+      assert.equal(await fs.readFile(path.join(consumer.home, file), 'utf8'), `seed:${file}`);
+    await consumer.post();
+    assert.equal(cache.saves.length, before);
+    for (const [name, overrides] of [
+      ['different-family', { 'cache-family': 'other' }],
+      ['strict', { 'cache-strict-match': 'true' }],
+      ['different-namespace', { 'cache-key-prefix': 'other-namespace' }],
+    ]) {
+      const negative = await session(
+        root,
+        name,
+        cache,
+        { ...inputs, ...overrides, matrix: '{"java":21}', 'cache-read-only': 'true' },
+        { GITHUB_WORKFLOW: 'Other workflow', GITHUB_JOB: 'consumer' },
+      );
+      assert.equal(negative.c.outputs['cache-hit'], 'false');
+      assert.equal(
+        await fs.stat(path.join(negative.home, files[0])).then(
+          () => true,
+          () => false,
+        ),
+        false,
+      );
+      await negative.post();
+    }
+    assert.equal(cache.saves.length, before);
+  }));
+
+test('archive descriptors reject parent and current directory wrapper members', () => {
+  for (const member of ['wrapper/dists/.', 'wrapper/dists/..'])
+    assert.throws(() => descriptorUnit({ kind: 'wrapper', path: member }, 'scope', 'prefix'));
+  assert.equal(
+    configuration(core(), {
+      GITHUB_REF: 'refs/heads/main',
+      GITHUB_EVENT_NAME: 'pull_request_target',
+      GITHUB_EVENT_PATH_CONTENT: JSON.stringify({ repository: { default_branch: 'main' } }),
+    }).readOnly,
+    true,
+  );
+});
+
+test('content hashes distinguish multiple files from a stream embedding file boundaries', () =>
+  fixture(async (root) => {
+    const home = path.join(root, 'hash-home');
+    const first = 'caches/modules-2/files-2.1/a',
+      second = 'caches/modules-2/files-2.1/b';
+    await put(home, first, 'first');
+    await put(home, second, 'second');
+    process.chdir(home);
+    const unit = { paths: ['caches/modules-2/files-2.1'] };
+    const separate = await fingerprint(unit);
+    const mode = String((await fs.stat(second)).mode & 0o777);
+    await fs.writeFile(first, Buffer.from(`first\0${second}\0${mode}\0second`));
+    await fs.unlink(second);
+    const embedded = await fingerprint(unit);
+    assert.notEqual(
+      separate.hash,
+      embedded.hash,
+      'binary payload delimiters must not impersonate path and mode framing',
+    );
+  }));
+
+test('archive key hashes immutable staged bytes when live files change around capture', () =>
+  fixture(async (root) => {
+    const home = path.join(root, 'live'),
+      stage = path.join(root, 'private-stage');
+    const relative = 'caches/modules-2/files-2.1/library.jar';
+    const unit = { name: 'dependencies', paths: ['caches/modules-2/files-2.1'] };
+    await put(home, relative, 'before');
+    process.chdir(home);
+    const earlierLive = await fingerprint(unit);
+    await put(home, relative, 'captured revision');
+    const captured = await stageSnapshot(unit, [], () => true, stage, home);
+    assert.notEqual(
+      captured.hash,
+      earlierLive.hash,
+      'an earlier live fingerprint cannot become the archive key',
+    );
+    await put(home, relative, 'changed after capture');
+    const archive = path.join(stage, snapshotPath(unit));
+    assert.equal(await fs.readFile(path.join(archive, relative), 'utf8'), 'captured revision');
+    process.chdir(archive);
+    assert.equal(
+      (await fingerprint(unit)).hash,
+      captured.hash,
+      'cache key describes exactly the uploaded archive',
+    );
+    process.chdir(home);
+    assert.notEqual(
+      (await fingerprint(unit)).hash,
+      captured.hash,
+      'later live writes cannot change staged content or its key',
+    );
   }));
