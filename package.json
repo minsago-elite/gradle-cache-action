@@ -1,0 +1,19 @@
+{
+  "name": "gradle-cache-action",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Standalone granular Gradle user home caching for GitHub Actions",
+  "license": "AGPL-3.0-or-later",
+  "scripts": {
+    "build": "node tooling/build.mjs",
+    "test": "node --test test/*.test.mjs tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@actions/cache": "6.2.0",
+    "@actions/core": "3.0.1",
+    "@actions/glob": "0.6.1"
+  },
+  "devDependencies": {
+    "esbuild": "0.25.12"
+  }
+}

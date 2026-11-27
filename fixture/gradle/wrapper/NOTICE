@@ -1,0 +1,8 @@
+Gradle Wrapper
+Copyright 2007-2023 the original author or authors.
+
+This directory contains the Gradle Wrapper JAR from Gradle 8.0.2. The wrapper
+is distributed under the Apache License, Version 2.0; see LICENSE and
+https://www.apache.org/licenses/LICENSE-2.0.
+The pinned Gradle distribution checksum is published at
+https://gradle.org/release-checksums/.

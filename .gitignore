@@ -1,0 +1,7 @@
+node_modules/
+.npm-cache/
+.tmp/
+fixture/.gradle/
+fixture/build/
+.action-test-*/
+.encryption-test-*/

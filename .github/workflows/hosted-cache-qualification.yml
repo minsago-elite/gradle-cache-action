@@ -1,0 +1,155 @@
+name: Hosted cold and warm cache qualification
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/hosted-cache-qualification.yml'
+      - 'action.yml'
+      - 'dist/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src/**'
+      - 'test/**'
+      - 'fixture/**'
+      - 'scripts/**'
+  push:
+    paths:
+      - '.github/workflows/hosted-cache-qualification.yml'
+      - 'action.yml'
+      - 'dist/**'
+      - 'package.json'
+      - 'package-lock.json'
+      - 'src/**'
+      - 'test/**'
+      - 'fixture/**'
+      - 'scripts/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: hosted-cache-qualification-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cold:
+    name: Cold cache save (ubuntu-latest)
+    runs-on: ubuntu-latest
+    outputs:
+      wrapper-digest: ${{ steps.proof.outputs.wrapper-digest }}
+      generated-jar-digest: ${{ steps.proof.outputs.generated-jar-digest }}
+    steps:
+      - name: Choose a private cold-runner Gradle home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home-cold" >> "$GITHUB_ENV"
+
+      - name: Check out action and fixture
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Java 17
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Confirm clean runner Gradle home
+        run: test ! -e "$GRADLE_USER_HOME"
+
+      - name: Restore and schedule save for this run's cache namespace
+        id: cache
+        uses: ./
+        with:
+          gradle-user-home: ${{ runner.temp }}/gradle-user-home-cold
+          cache-key-prefix: hosted-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-read-only: 'false'
+          cache-cleanup: on-success
+
+      - name: Confirm the unique namespace starts cold
+        env:
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        run: test "$CACHE_HIT" = false
+
+      - name: Populate Gradle user home on the cold runner
+        working-directory: fixture
+        run: ./gradlew --no-daemon --console=plain classes
+
+      - name: Prove the cold runner generated cache content
+        id: proof
+        run: ./scripts/assert-gradle-home.sh cold
+
+  warm:
+    name: Warm cache restore (fresh ubuntu-latest runner)
+    needs: cold
+    runs-on: ubuntu-latest
+    steps:
+      - name: Choose a different private warm-runner Gradle home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home-warm" >> "$GITHUB_ENV"
+
+      - name: Check out action and fixture
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Set up Java 17
+        uses: actions/setup-java@dded0888837ed1f317902acf8a20df0ad188d165 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Confirm the second runner starts without the Gradle home
+        run: test ! -e "$GRADLE_USER_HOME"
+
+      - name: Restore the cold job's cache in read-only mode
+        id: cache
+        uses: ./
+        with:
+          gradle-user-home: ${{ runner.temp }}/gradle-user-home-warm
+          cache-key-prefix: hosted-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-read-only: 'true'
+          cache-cleanup: never
+
+      - name: Require a cache hit and materialized Gradle state
+        id: proof
+        env:
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+          RESTORED_COUNT: ${{ steps.cache.outputs.cache-restored-count }}
+          EXPECTED_WRAPPER_DIGEST: ${{ needs.cold.outputs.wrapper-digest }}
+          EXPECTED_GENERATED_JAR_DIGEST: ${{ needs.cold.outputs.generated-jar-digest }}
+        run: |
+          test "$CACHE_HIT" = true
+          test "$RESTORED_COUNT" -gt 0
+          ./scripts/assert-gradle-home.sh warm
+          test "$(sed -n 's/^wrapper-digest=//p' "$GITHUB_OUTPUT" | tail -n1)" = "$EXPECTED_WRAPPER_DIGEST"
+          test "$(sed -n 's/^generated-jar-digest=//p' "$GITHUB_OUTPUT" | tail -n1)" = "$EXPECTED_GENERATED_JAR_DIGEST"
+
+      - name: Validate the restored distribution and generated scripts offline
+        working-directory: fixture
+        run: ./gradlew --offline --no-daemon --console=plain classes
+
+      - name: Mutate a cacheable path to prove read-only mode does not save it
+        run: touch "$GRADLE_USER_HOME/caches/8.0.2/generated-gradle-jars/ci-read-only-probe.txt"
+
+  read-only-guard:
+    name: Verify read-only warm mutation was not saved
+    needs: warm
+    runs-on: ubuntu-latest
+    steps:
+      - name: Choose a fresh probe-runner Gradle home
+        run: echo "GRADLE_USER_HOME=$RUNNER_TEMP/gradle-user-home-read-only-probe" >> "$GITHUB_ENV"
+
+      - name: Check out action and fixture
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - name: Restore the same namespace read-only on a third clean runner
+        id: cache
+        uses: ./
+        with:
+          gradle-user-home: ${{ runner.temp }}/gradle-user-home-read-only-probe
+          cache-key-prefix: hosted-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          cache-read-only: 'true'
+          cache-cleanup: never
+
+      - name: Prove the warm mutation was not persisted
+        env:
+          CACHE_HIT: ${{ steps.cache.outputs.cache-hit }}
+        run: |
+          test "$CACHE_HIT" = true
+          test ! -e "$GRADLE_USER_HOME/caches/8.0.2/generated-gradle-jars/ci-read-only-probe.txt"

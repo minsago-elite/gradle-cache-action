@@ -1,0 +1,53 @@
+name: Gradle Cache
+description: Standalone granular Gradle user home caching without proprietary caching libraries
+inputs:
+  gradle-user-home:
+    description: Absolute Gradle user home (defaults to GRADLE_USER_HOME or ~/.gradle)
+    required: false
+  cache-read-only:
+    description: Restore without saving (defaults to true outside the default branch)
+    required: false
+  cache-write-only:
+    description: Save without restoring
+    default: 'false'
+  cache-cleanup:
+    description: Remove unused restored cache groups from saved snapshots using observed access times (always, on-success, never)
+    default: on-success
+  cache-overwrite-existing:
+    description: Allow restoring into an existing populated Gradle user home
+    default: 'false'
+  cache-key-prefix:
+    description: Namespace for cache entries
+    default: gradle-cache-v1
+  cache-family:
+    description: Optional namespace enabling manifest fallback across workflows and matrix variants; seed from a trusted write-enabled job
+    required: false
+  cache-strict-match:
+    description: Restrict manifest fallback to the same workflow, job, and matrix
+    default: 'false'
+  cache-exclude:
+    description: Newline-separated relative glob patterns excluded from Gradle home caches
+    required: false
+  cache-encryption-key:
+    description: Base64 AES key (16, 24, or 32 bytes) for opt-in authenticated project configuration cache encryption
+    required: false
+  job-status:
+    description: Job status used to apply on-success cleanup
+    default: ${{ job.status }}
+  matrix:
+    description: JSON matrix dimensions used to isolate generated and metadata caches
+    default: '{}'
+outputs:
+  cache-hit:
+    description: Whether any cache unit was restored
+  cache-restored-key:
+    description: JSON object mapping restored units to their actual keys
+  cache-restored-count:
+    description: Number of restored cache units
+  cache-saved-count:
+    description: Number of saved cache units (available in post step)
+runs:
+  using: node24
+  main: dist/index.cjs
+  post: dist/index.cjs
+  post-if: always()
